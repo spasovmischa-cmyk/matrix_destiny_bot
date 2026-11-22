@@ -1,0 +1,6 @@
+[build]
+builder = "heroku.buildpacks"
+buildpacks = ["heroku/python"]
+
+[deploy]
+startCommand = "python bot.py"

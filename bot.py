@@ -12,7 +12,7 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import (
     Application, CallbackQueryHandler, CommandHandler, ContextTypes,
     ConversationHandler, MessageHandler, filters,
@@ -27,6 +27,8 @@ log = logging.getLogger("arhet_bot")
 (NAME, DOB, METHOD, EXTRA, TIME, PLACE, PARTNER_YN, PARTNER_INFO,
  CHILDREN_YN, CHILDREN_INFO, PARENTS_YN, PARENTS_INFO, REVIEW) = range(13)
 METHODS = {"method_py": "Пифагорейская", "method_kab": "Каббалистическая", "method_ve": "Ведическая"}
+PANEL = ReplyKeyboardMarkup([["🔄 Старт", "✖️ Отмена"]], resize_keyboard=True)
+PANEL_PATTERN = r"^(🔄 Старт|✖️ Отмена)$"
 
 
 def kb(rows):
@@ -47,7 +49,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "Это не приговор и не точное предсказание, а повод лучше прислушаться к себе.\n\n"
         "Для начала введите полное ФИО: имя, отчество и фамилию (три слова)."
     )
-    await update.message.reply_text(greeting, reply_markup=kb([[('ℹ️ Помощь', 'help')]]))
+    await update.message.reply_text(greeting + "\n\nДля помощи отправьте /help. Кнопки «Старт» и «Отмена» всегда доступны внизу.", reply_markup=PANEL)
     return NAME
 
 
@@ -287,9 +289,19 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+async def panel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Routes persistent reply-keyboard buttons in any dialogue state."""
+    pressed = update.message.text.strip()
+    if pressed == "🔄 Старт":
+        return await start(update, context)
+    if pressed == "✖️ Отмена":
+        return await cancel(update, context)
+    return ConversationHandler.END
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    await update.message.reply_text("Разбор отменён. Чтобы начать заново, отправьте /start.")
+    await update.message.reply_text("Разбор отменён. Нажмите «🔄 Старт», чтобы начать заново.", reply_markup=PANEL)
     return ConversationHandler.END
 
 
@@ -410,29 +422,32 @@ def build_report(d: dict) -> str:
 
 def main():
     app = Application.builder().token(TOKEN).build()
+    panel_handler = MessageHandler(filters.Regex(PANEL_PATTERN), panel_action)
     conv = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[CommandHandler('start', start), panel_handler],
         states={
-            NAME: [CallbackQueryHandler(help_button, pattern='^help$'), MessageHandler(filters.TEXT & ~filters.COMMAND, name_input)],
-            DOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, dob_input)],
-            METHOD: [CallbackQueryHandler(method_choice, pattern='^method_(py|kab|ve)$')],
-            EXTRA: [CallbackQueryHandler(extra_choice, pattern='^extra_(yes|no)$')],
-            TIME: [CallbackQueryHandler(time_choice, pattern='^time_(yes|no)$'), MessageHandler(filters.TEXT & ~filters.COMMAND, time_input)],
-            PLACE: [CallbackQueryHandler(place_choice, pattern='^place_(yes|no)$'), MessageHandler(filters.TEXT & ~filters.COMMAND, place_input)],
-            PARTNER_YN: [CallbackQueryHandler(partner_choice, pattern='^partner_(yes|no)$')],
-            PARTNER_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, partner_input)],
-            CHILDREN_YN: [CallbackQueryHandler(children_choice, pattern='^children_(yes|no)$')],
-            CHILDREN_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, children_input)],
-            PARENTS_YN: [CallbackQueryHandler(parents_choice, pattern='^parents_(yes|no)$')],
-            PARENTS_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, parents_input)],
-            REVIEW: [CallbackQueryHandler(confirm, pattern='^confirm_(yes|restart)$')],
+            NAME: [panel_handler, CallbackQueryHandler(help_button, pattern='^help$'), MessageHandler(filters.TEXT & ~filters.COMMAND, name_input)],
+            DOB: [panel_handler, MessageHandler(filters.TEXT & ~filters.COMMAND, dob_input)],
+            METHOD: [panel_handler, CallbackQueryHandler(method_choice, pattern='^method_(py|kab|ve)$')],
+            EXTRA: [panel_handler, CallbackQueryHandler(extra_choice, pattern='^extra_(yes|no)$')],
+            TIME: [panel_handler, CallbackQueryHandler(time_choice, pattern='^time_(yes|no)$'), MessageHandler(filters.TEXT & ~filters.COMMAND, time_input)],
+            PLACE: [panel_handler, CallbackQueryHandler(place_choice, pattern='^place_(yes|no)$'), MessageHandler(filters.TEXT & ~filters.COMMAND, place_input)],
+            PARTNER_YN: [panel_handler, CallbackQueryHandler(partner_choice, pattern='^partner_(yes|no)$')],
+            PARTNER_INFO: [panel_handler, MessageHandler(filters.TEXT & ~filters.COMMAND, partner_input)],
+            CHILDREN_YN: [panel_handler, CallbackQueryHandler(children_choice, pattern='^children_(yes|no)$')],
+            CHILDREN_INFO: [panel_handler, MessageHandler(filters.TEXT & ~filters.COMMAND, children_input)],
+            PARENTS_YN: [panel_handler, CallbackQueryHandler(parents_choice, pattern='^parents_(yes|no)$')],
+            PARENTS_INFO: [panel_handler, MessageHandler(filters.TEXT & ~filters.COMMAND, parents_input)],
+            REVIEW: [panel_handler, CallbackQueryHandler(confirm, pattern='^confirm_(yes|restart)$')],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
         allow_reentry=True,
     )
     app.add_handler(conv)
     app.add_handler(CommandHandler('help', help_cmd))
-    log.info('Bot started')
+    # Handles the persistent keyboard also when no conversation is active.
+    app.add_handler(MessageHandler(filters.Regex(PANEL_PATTERN), panel_action))
+    log.info('Bot started with persistent Start/Cancel keyboard')
     app.run_polling()
 
 

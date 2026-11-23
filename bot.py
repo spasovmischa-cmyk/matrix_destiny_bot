@@ -41,6 +41,7 @@ log = logging.getLogger("arhet_bot")
 METHODS = {"method_py": "Пифагорейская", "method_kab": "Каббалистическая", "method_ve": "Ведическая"}
 PANEL = ReplyKeyboardMarkup([["🔄 Старт", "✖️ Отмена"]], resize_keyboard=True)
 PANEL_PATTERN = r"^(🔄 Старт|✖️ Отмена)$"
+PATRONYMIC_ENDINGS = ("ович", "евич", "ич", "овна", "евна", "ична")
 
 KNOWLEDGE = """Опорные правила (версия 2 базы):
 - Жизненное число: сумма всех цифр даты рождения, сведённая к однозначному числу.
@@ -52,7 +53,7 @@ KNOWLEDGE = """Опорные правила (версия 2 базы):
 
 RULES = """Ты — экспертный нумерологический аналитик продукта «Сканер жизни».
 Пиши по-русски, на «вы», уверенно, тепло и content-rich, без мистической театральности.
-Строго запрещено: фамилия (используй только имя); фразы «согласно предоставленным данным», «исходя из вашей даты», «ваша матрица говорит», «вселенная приготовила», «судьба предрешена», «вам суждено»; обещания дохода, брака, развода, болезней, смерти; диагнозы и связи чисел с органами; проценты совместимости; благоприятные дни; рекомендации по цветам и камням как гарантированный эффект.
+Строго запрещено: фамилия (обращайся только по имени, фамилию не упоминай вообще); фразы «согласно предоставленным данным», «исходя из вашей даты», «ваша матрица говорит», «вселенная приготовила», «судьба предрешена», «вам суждено»; обещания дохода, брака, развода, болезней, смерти; диагнозы и связи чисел с органами; проценты совместимости; благоприятные дни; рекомендации по цветам и камням как гарантированный эффект.
 Каждая часть: основная характеристика, сильные стороны, сложности, как это проявляется в жизни, что требует внимания, что можно развивать, практические шаги. Не пересказывай анкету. Не используй markdown-символы (**, #, списки-звёздочки), пиши связным текстом с абзацами."""
 
 SECTIONS = [
@@ -74,6 +75,19 @@ DEFAULT_FAMILY = "не предоставлены"
 
 def kb(rows):
     return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data=data) for text, data in row] for row in rows])
+
+
+def pick_first_name(parts):
+    for i, word in enumerate(parts):
+        if i and word.lower().endswith(PATRONYMIC_ENDINGS):
+            return parts[1] if i == 2 else parts[0]
+    return parts[0]
+
+
+def scrub_surname(text, surnames):
+    for surname in surnames:
+        text = re.sub(rf"\b{re.escape(surname)}\b", "", text, flags=re.IGNORECASE)
+    return re.sub(r"[ \t]{2,}", " ", text)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -112,8 +126,9 @@ async def name_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if len(parts) < 3 or not all(re.fullmatch(r"[A-Za-zА-Яа-яЁё’'-]+", p) for p in parts):
         await update.message.reply_text("Пожалуйста, введите ФИО тремя словами: имя, отчество, фамилия. Например: Иван Иванович Иванов.")
         return NAME
-    context.user_data.update(full_name=name, first_name=parts[0])
-    await update.message.reply_text(f"Спасибо, {parts[0]}! Теперь укажите дату рождения в формате ДД.ММ.ГГГГ, например 15.03.1990.")
+    first = pick_first_name(parts)
+    context.user_data.update(full_name=name, first_name=first)
+    await update.message.reply_text(f"Спасибо, {first}! Теперь укажите дату рождения в формате ДД.ММ.ГГГГ, например 15.03.1990.")
     return DOB
 
 
@@ -429,9 +444,12 @@ async def build_report(d: dict) -> str:
         user_texts.append(
             f"Данные человека:\n{facts}\n\n"
             f"Раздел: «{title}».\nЗадание: {instruction}\n"
-            "Объём раздела: 350–500 слов. Пиши связными абзацами, без списков и без заголовка раздела в начале."
+            "Объём раздела: 350–500 слов. Пиши связными абзацами, без списков и без заголовка раздела в начале. "
+            f"Обращайся только по имени «{first}», фамилию не упоминай."
         )
     texts = await gigachat_generate(system_text, user_texts)
+    other_names = [w for w in full.split() if w != first]
+    texts = [scrub_surname(t, other_names) for t in texts]
 
     doc = Document()
     normal = doc.styles['Normal']
